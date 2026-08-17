@@ -1,0 +1,88 @@
+diff --git a/models/rdt_runner.py b/models/rdt_runner.py
+--- a/models/rdt_runner.py
++++ b/models/rdt_runner.py
+@@ -11,6 +11,8 @@
+ from models.hub_mixin import CompatiblePyTorchModelHubMixin
+ from models.rdt.model import RDT
+ 
++from endcache import HoldCache, interval_from_env, steps_from_env
++
+ 
+ class RDTRunner(
+         nn.Module, 
+@@ -70,7 +72,7 @@
+         )
+ 
+         self.num_train_timesteps = noise_scheduler_config['num_train_timesteps']
+-        self.num_inference_timesteps = noise_scheduler_config['num_inference_timesteps']
++        self.num_inference_timesteps = steps_from_env(noise_scheduler_config['num_inference_timesteps'])
+         self.prediction_type = noise_scheduler_config['prediction_type']
+ 
+         self.pred_horizon = pred_horizon
+@@ -140,16 +142,21 @@
+         # Set step values
+         self.noise_scheduler_sample.set_timesteps(self.num_inference_timesteps)
+         
+-        for t in self.noise_scheduler_sample.timesteps:
++        # EndCache Algorithm 1 and RDT. Hold the sample-prediction endpoint directly.
++        endpoint_hold = HoldCache(interval_from_env())
++        for step_index, t in enumerate(self.noise_scheduler_sample.timesteps):
+             # Prepare state-action trajectory
+             action_traj = torch.cat([noisy_action, action_mask], dim=2)
+             action_traj = self.state_adaptor(action_traj)
+             state_action_traj = torch.cat([state_traj, action_traj], dim=1)
+             
+-            # Predict the model output
+-            model_output = self.model(state_action_traj, ctrl_freqs,
+-                                    t.unsqueeze(-1).to(device),
+-                                    lang_cond, img_cond, lang_mask=lang_attn_mask)
++            # Refresh the clean-action endpoint only every k steps.
++            if endpoint_hold.should_refresh(step_index):
++                endpoint_hold.store(self.model(
++                    state_action_traj, ctrl_freqs, t.unsqueeze(-1).to(device),
++                    lang_cond, img_cond, lang_mask=lang_attn_mask
++                ))
++            model_output = endpoint_hold.value
+             
+             # Compute previous actions: x_t -> x_t-1
+             noisy_action = self.noise_scheduler_sample.step(
+
+diff --git a/eval_sim/eval_rdt_maniskill.py b/eval_sim/eval_rdt_maniskill.py
+--- a/eval_sim/eval_rdt_maniskill.py
++++ b/eval_sim/eval_rdt_maniskill.py
+@@ -52,6 +52,7 @@
+ }
+ 
+ env_id = args.env_id
++MAX_EPISODE_STEPS = 400
+ env = gym.make(
+     env_id,
+     obs_mode=args.obs_mode,
+@@ -61,7 +62,8 @@
+     sensor_configs=dict(shader_pack=args.shader),
+     human_render_camera_configs=dict(shader_pack=args.shader),
+     viewer_camera_configs=dict(shader_pack=args.shader),
+-    sim_backend=args.sim_backend
++    sim_backend=args.sim_backend,
++    max_episode_steps=MAX_EPISODE_STEPS
+ )
+ 
+ config_path = 'configs/base.yaml'
+@@ -84,15 +86,14 @@
+     text_embed = policy.encode_instruction(task2lang[env_id])
+     torch.save(text_embed, f'text_embed_{env_id}.pt')
+ 
+-MAX_EPISODE_STEPS = 400 
+ total_episodes = args.num_traj  
+ success_count = 0  
+ 
+-base_seed = 20241201
++reset_seed = seed
+ import tqdm
+ for episode in tqdm.trange(total_episodes):
+     obs_window = deque(maxlen=2)
+-    obs, _ = env.reset(seed = episode + base_seed)
++    obs, _ = env.reset(seed=reset_seed if episode == 0 else None)
+     policy.reset()
+ 
+     img = env.render().squeeze(0).detach().cpu().numpy()

@@ -1,0 +1,57 @@
+diff --git a/gr00t/model/gr00t_n1d7/gr00t_n1d7.py b/gr00t/model/gr00t_n1d7/gr00t_n1d7.py
+--- a/gr00t/model/gr00t_n1d7/gr00t_n1d7.py
++++ b/gr00t/model/gr00t_n1d7/gr00t_n1d7.py
+@@ -21,6 +21,8 @@
+ from torch.distributions import Beta
+ import torch.nn.functional as F
+ from transformers import AutoConfig, AutoModel, PreTrainedModel
++
++from endcache import HoldCache, interval_from_env, steps_from_env
+ from transformers.feature_extraction_utils import BatchFeature
+ import tree
+ 
+@@ -61,7 +63,7 @@
+             logger.info("Using DiT for diffusion model")
+         self.action_dim = config.max_action_dim
+         self.action_horizon = config.action_horizon
+-        self.num_inference_timesteps = config.num_inference_timesteps
++        self.num_inference_timesteps = steps_from_env(config.num_inference_timesteps)
+ 
+         self.state_encoder = CategorySpecificMLP(
+             num_categories=config.max_num_embodiments,
+@@ -380,7 +382,13 @@
+             ] = ramp[None, :, None].to(device)
+ 
+         # Run denoising steps.
++        # EndCache Algorithm 1 and NVIDIA Isaac-GR00T. Use velocity hold only.
++        velocity_hold = HoldCache(interval_from_env())
+         for t in range(self.num_inference_timesteps):
++            if not velocity_hold.should_refresh(t):
++                actions = actions + dt * velocity_hold.value * vel_strength
++                continue
++
+             t_cont = t / float(self.num_inference_timesteps)  # e.g. goes 0, 1/N, 2/N, ...
+             t_discretized = int(t_cont * self.num_timestep_buckets)
+ 
+@@ -416,6 +424,7 @@
+             pred = self.action_decoder(model_output, embodiment_id)
+ 
+             pred_velocity = pred[:, -self.action_horizon :]
++            velocity_hold.store(pred_velocity)
+ 
+             # Update actions using euler integration.
+             actions = actions + dt * pred_velocity * vel_strength
+
+diff --git a/gr00t/eval/rollout_policy.py b/gr00t/eval/rollout_policy.py
+--- a/gr00t/eval/rollout_policy.py
++++ b/gr00t/eval/rollout_policy.py
+@@ -400,6 +400,9 @@
+         episode_successes = [episode_successes[i] for i in valid_idxs]
+         episode_infos = {k: [v[i] for i in valid_idxs] for k, v in episode_infos.items()}
+ 
++    episode_successes = episode_successes[:n_episodes]
++    episode_infos = {key: value[:n_episodes] for key, value in episode_infos.items()}
++
+     return env_name, episode_successes, episode_infos
+ 
+ 

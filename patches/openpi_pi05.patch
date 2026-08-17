@@ -1,0 +1,56 @@
+diff --git a/src/openpi/models_pytorch/pi0_pytorch.py b/src/openpi/models_pytorch/pi0_pytorch.py
+--- a/src/openpi/models_pytorch/pi0_pytorch.py
++++ b/src/openpi/models_pytorch/pi0_pytorch.py
+@@ -6,6 +6,8 @@
+ from torch import nn
+ import torch.nn.functional as F  # noqa: N812
+ 
++from endcache import HoldCache, interval_from_env, steps_from_env
++
+ import openpi.models.gemma as _gemma
+ from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
+ import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
+@@ -376,6 +378,7 @@
+     @torch.no_grad()
+     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
+         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
++        num_steps = steps_from_env(num_steps)
+         bsize = observation.state.shape[0]
+         if noise is None:
+             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
+@@ -404,19 +407,26 @@
+ 
+         x_t = noise
+         time = torch.tensor(1.0, dtype=torch.float32, device=device)
++        # EndCache Algorithm 1 and openpi. Hold the latest fresh velocity.
++        velocity_hold = HoldCache(interval_from_env())
++        step_index = 0
+         while time >= -dt / 2:
+-            expanded_time = time.expand(bsize)
+-            v_t = self.denoise_step(
+-                state,
+-                prefix_pad_masks,
+-                past_key_values,
+-                x_t,
+-                expanded_time,
+-            )
++            if velocity_hold.should_refresh(step_index):
++                expanded_time = time.expand(bsize)
++                velocity_hold.store(
++                    self.denoise_step(
++                        state,
++                        prefix_pad_masks,
++                        past_key_values,
++                        x_t,
++                        expanded_time,
++                    )
++                )
+ 
+             # Euler step - use new tensor assignment instead of in-place operation
+-            x_t = x_t + dt * v_t
++            x_t = x_t + dt * velocity_hold.value
+             time += dt
++            step_index += 1
+         return x_t
+ 
+     def denoise_step(

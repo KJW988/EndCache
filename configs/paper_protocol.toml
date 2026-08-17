@@ -1,0 +1,88 @@
+[paper]
+title = "What to Reuse in Generative Robot Policies? A Solver-Aware Mathematical Analysis of Training-Free Output Caching for Action Generation"
+cache_rule = "hold"
+refresh_rule = "step_index % reuse_interval == 0"
+nfe_rule = "ceil(num_steps / reuse_interval)"
+
+[diffusion_policy]
+upstream_revision = "5ba07ac6661db573af695b419a7947ecb704690f"
+solver = "DDPM"
+head_parameterization = "epsilon"
+num_steps = 100
+reuse_intervals = [1, 10]
+main_cache_space = "endpoint"
+ablation_cache_spaces = ["endpoint", "noise"]
+checkpoint_groups = ["can", "lift", "square", "transport", "tool_hang", "pusht"]
+checkpoint_counts = [12, 12, 12, 12, 6, 6]
+episodes_per_checkpoint = 50
+
+[pi05]
+upstream_revision = "650c5b0283a49c42784fb5055a0507da2c6d347d"
+solver = "Euler"
+head_parameterization = "velocity"
+num_steps = 10
+reuse_intervals = [1, 2, 3, 4, 5, 10]
+cache_space = "velocity"
+benchmark = "LIBERO"
+suites = ["libero_spatial", "libero_object", "libero_goal", "libero_10"]
+task_manifest = "configs/libero_tasks.toml"
+trials_per_task = 50
+seeds = [7, 42, 123]
+
+[groot_n17]
+upstream_revision = "3df8b3825d67f755e69141446f4315f281b9b7e6"
+solver = "Euler"
+head_parameterization = "velocity"
+num_steps = 4
+reuse_intervals = [1, 2, 4]
+cache_space = "velocity"
+benchmark = "LIBERO"
+suites = ["libero_spatial", "libero_object", "libero_goal", "libero_10"]
+task_manifest = "configs/libero_tasks.toml"
+trials_per_task = 50
+seeds = [7, 42, 123]
+max_episode_steps = 720
+
+[rdt]
+upstream_revision = "cd79363a1387e8f81c7724d070ef7e45fd23150f"
+solver = "DPM-Solver++"
+head_parameterization = "sample"
+num_steps = 5
+reuse_intervals = [1, 2, 3, 5]
+cache_space = "endpoint"
+benchmark = "ManiSkill"
+tasks = ["PegInsertionSide-v1", "PickCube-v1", "StackCube-v1", "PlugCharger-v1", "PushCube-v1"]
+reset_seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+trajectories_per_reset_seed = 25
+max_episode_steps = 400
+
+[groot_n16]
+upstream_revision = "ead52833afbbf4243f8cd5e7664f48a94de03b19"
+solver = "Euler"
+head_parameterization = "velocity"
+num_steps = 4
+reuse_intervals = [1, 2, 4]
+cache_space = "velocity"
+benchmark = "RoboCasa GR1"
+task_manifest = "configs/gr1_tasks.txt"
+episodes_per_task = 200
+max_episode_steps = 720
+seed_protocol = "single_unseeded_run"
+
+[latency]
+device = "NVIDIA A6000"
+batch_size = 1
+warmup = 30
+repeats = 100
+timer = "CUDA events"
+
+[iso_nfe.pi05]
+native_num_steps = [1, 2, 5]
+endcache_num_steps = 10
+endcache_reuse_intervals = [10, 5, 2]
+
+[iso_nfe.groot_n17]
+native_num_steps = [1, 2]
+endcache_num_steps = 4
+endcache_reuse_intervals = [4, 2]
+

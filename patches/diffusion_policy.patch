@@ -1,0 +1,81 @@
+diff --git a/diffusion_policy/policy/diffusion_unet_lowdim_policy.py b/diffusion_policy/policy/diffusion_unet_lowdim_policy.py
+--- a/diffusion_policy/policy/diffusion_unet_lowdim_policy.py
++++ b/diffusion_policy/policy/diffusion_unet_lowdim_policy.py
+@@ -5,6 +5,9 @@
+ from einops import rearrange, reduce
+ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+ 
++from endcache import steps_from_env
++from endcache.torch_diffusion import DDPMOutputHold
++
+ from diffusion_policy.model.common.normalizer import LinearNormalizer
+ from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
+ from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
+@@ -73,15 +76,23 @@
+             generator=generator)
+     
+         # set step values
+-        scheduler.set_timesteps(self.num_inference_steps)
++        scheduler.set_timesteps(steps_from_env(self.num_inference_steps))
+ 
+-        for t in scheduler.timesteps:
++        # EndCache Algorithm 1. Hold the configured output on the full DDPM grid
++        output_hold = DDPMOutputHold.from_environment(scheduler)
++        for step_index, t in enumerate(scheduler.timesteps):
+             # 1. apply conditioning
+             trajectory[condition_mask] = condition_data[condition_mask]
+ 
+-            # 2. predict model output
+-            model_output = model(trajectory, t, 
+-                local_cond=local_cond, global_cond=global_cond)
++            # 2. refresh or reuse the configured cache space at the current state
++            if output_hold.should_refresh(step_index):
++                model_output = output_hold.record_fresh(
++                    t,
++                    model(trajectory, t, local_cond=local_cond, global_cond=global_cond),
++                    trajectory,
++                )
++            else:
++                model_output = output_hold.reuse(t, trajectory)
+ 
+             # 3. compute previous image: x_t -> x_t-1
+             trajectory = scheduler.step(
+diff --git a/diffusion_policy/policy/diffusion_transformer_lowdim_policy.py b/diffusion_policy/policy/diffusion_transformer_lowdim_policy.py
+--- a/diffusion_policy/policy/diffusion_transformer_lowdim_policy.py
++++ b/diffusion_policy/policy/diffusion_transformer_lowdim_policy.py
+@@ -3,6 +3,9 @@
+ import torch.nn as nn
+ import torch.nn.functional as F
+ from einops import rearrange, reduce
++
++from endcache import steps_from_env
++from endcache.torch_diffusion import DDPMOutputHold
+ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+ 
+ from diffusion_policy.model.common.normalizer import LinearNormalizer
+@@ -68,14 +71,21 @@
+             generator=generator)
+     
+         # set step values
+-        scheduler.set_timesteps(self.num_inference_steps)
++        scheduler.set_timesteps(steps_from_env(self.num_inference_steps))
+ 
+-        for t in scheduler.timesteps:
++        # EndCache Algorithm 1. Hold the configured output on the full DDPM grid
++        output_hold = DDPMOutputHold.from_environment(scheduler)
++        for step_index, t in enumerate(scheduler.timesteps):
+             # 1. apply conditioning
+             trajectory[condition_mask] = condition_data[condition_mask]
+ 
+-            # 2. predict model output
+-            model_output = model(trajectory, t, cond)
++            # 2. refresh or reuse the configured cache space at the current state
++            if output_hold.should_refresh(step_index):
++                model_output = output_hold.record_fresh(
++                    t, model(trajectory, t, cond), trajectory
++                )
++            else:
++                model_output = output_hold.reuse(t, trajectory)
+ 
+             # 3. compute previous image: x_t -> x_t-1
+             trajectory = scheduler.step(

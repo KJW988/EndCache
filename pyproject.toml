@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=67"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "endcache"
+version = "0.1.0"
+description = "Training-free hold-only output caching for generative robot policies"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
